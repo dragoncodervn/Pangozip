@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(pgz LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(ZLIB REQUIRED)
+
+add_executable(pgz
+    src/main.cpp
+    src/crc32.cpp
+    src/zip_writer.cpp 
+    src/zip_reader.cpp
+)
+target_link_libraries(pgz PRIVATE ZLIB::ZLIB)
+target_include_directories(pgz PRIVATE header)
