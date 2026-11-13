@@ -11,6 +11,7 @@ add_executable(pgz
     src/crc32.cpp
     src/zip_writer.cpp 
     src/zip_reader.cpp
+    src/cmd_pgz.cpp
 )
 target_link_libraries(pgz PRIVATE ZLIB::ZLIB)
 target_include_directories(pgz PRIVATE header)

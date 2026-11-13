@@ -76,6 +76,14 @@ build CMakeFiles/pgz.dir/src/zip_reader.cpp.obj: CXX_COMPILER__pgz_unscanned_ E$
   OBJECT_FILE_DIR = CMakeFiles\pgz.dir\src
   TARGET_SUPPORT_DIR = CMakeFiles\pgz.dir
 
+build CMakeFiles/pgz.dir/src/cmd_pgz.cpp.obj: CXX_COMPILER__pgz_unscanned_ E$:/Projects/Pangozip_Project/src/cmd_pgz.cpp || cmake_object_order_depends_target_pgz
+  DEP_FILE = CMakeFiles\pgz.dir\src\cmd_pgz.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IE:/Projects/Pangozip_Project/header
+  OBJECT_DIR = CMakeFiles\pgz.dir
+  OBJECT_FILE_DIR = CMakeFiles\pgz.dir\src
+  TARGET_SUPPORT_DIR = CMakeFiles\pgz.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target pgz
@@ -84,7 +92,7 @@ build CMakeFiles/pgz.dir/src/zip_reader.cpp.obj: CXX_COMPILER__pgz_unscanned_ E$
 #############################################
 # Link the executable pgz.exe
 
-build pgz.exe: CXX_EXECUTABLE_LINKER__pgz_ CMakeFiles/pgz.dir/src/main.cpp.obj CMakeFiles/pgz.dir/src/crc32.cpp.obj CMakeFiles/pgz.dir/src/zip_writer.cpp.obj CMakeFiles/pgz.dir/src/zip_reader.cpp.obj | C$:/msys64/ucrt64/lib/libz.dll.a
+build pgz.exe: CXX_EXECUTABLE_LINKER__pgz_ CMakeFiles/pgz.dir/src/main.cpp.obj CMakeFiles/pgz.dir/src/crc32.cpp.obj CMakeFiles/pgz.dir/src/zip_writer.cpp.obj CMakeFiles/pgz.dir/src/zip_reader.cpp.obj CMakeFiles/pgz.dir/src/cmd_pgz.cpp.obj | C$:/msys64/ucrt64/lib/libz.dll.a
   LINK_LIBRARIES = C:/msys64/ucrt64/lib/libz.dll.a  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\pgz.dir
   POST_BUILD = cd .
