@@ -48,7 +48,13 @@ static void write_local(std::vector<uint8_t>& out, Entry& e, const std::vector<u
     put16(out, e.method);   // compression method
     put16(out, 0);          // mod time
     put16(out, 0x21);       // mod date
-    put32(out, e.crc);
+    put32(out, e.crc);     
+    /*
+    CRC (Cyclic Redundancy Check) là mã kiểm tra lỗi. 
+    Nó tính ra một số nguyên ngắn (ở đây là 32 bit) từ dữ liệu, 
+    dùng để phát hiện dữ liệu bị hỏng do lỗi đọc/ghi hoặc truyền tải. 
+    Khi đọc lại, nếu CRC tính lại không khớp với CRC đã lưu thì dữ liệu đã bị thay đổi.
+    */
     put32(out, e.csize);    // compressed size
     put32(out, e.size);                // uncompressed size
     put16(out, (uint16_t)e.name.size());
