@@ -3,13 +3,14 @@
 #include <string>
 #include <vector>
 
+
 struct ZipEntry {
     std::string name;
     uint16_t method;
     uint32_t crc;
-    uint32_t comp_size;
-    uint32_t uncomp_size;
-    uint32_t local_offset;
+    uint64_t comp_size;
+    uint64_t uncomp_size;
+    uint64_t local_offset;
 };
 
 bool read_zip_entries(const std::string& zip_path, std::vector<ZipEntry>& entries);

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -29,13 +30,24 @@ bool read_zip_entries(const std::string& zip_path, std::vector<ZipEntry>& entrie
     }
     if (eocd == SIZE_MAX) return false;
 
-    uint16_t total   = get16(buf, eocd + 10);
-    uint32_t cd_size = get32(buf, eocd + 12);
-    uint32_t cd_off  = get32(buf, eocd + 16);
-    if ((uint64_t)cd_off + cd_size > buf.size()) return false;
+    uint64_t total   = get16(buf, eocd + 10);
+    uint64_t cd_size = get32(buf, eocd + 12);
+    uint64_t cd_off  = get32(buf, eocd + 16);
 
-    size_t pos = cd_off;
-    for (uint16_t i = 0; i < total; ++i) {
+    // Có field nào bị tràn -> đọc Zip64 EOCD qua locator (nằm ngay trước EOCD)
+    if (total == 0xFFFF || cd_size == 0xFFFFFFFFull || cd_off == 0xFFFFFFFFull) {
+        if (eocd < 20 || get32(buf, eocd - 20) != 0x07064b50) return false;
+        uint64_t z64 = get64(buf, eocd - 20 + 8);
+        if (z64 + 56 > buf.size() || get32(buf, z64) != 0x06064b50) return false;
+        total   = get64(buf, z64 + 32);
+        cd_size = get64(buf, z64 + 40);
+        cd_off  = get64(buf, z64 + 48);
+    }
+    if (cd_off + cd_size > buf.size()) return false;
+
+    const uint64_t M = 0xFFFFFFFFull;
+    size_t pos = (size_t)cd_off;
+    for (uint64_t i = 0; i < total; ++i) {
         if (pos + 46 > buf.size()) return false;
         if (get32(buf, pos) != 0x02014b50) return false;
 
@@ -49,16 +61,34 @@ bool read_zip_entries(const std::string& zip_path, std::vector<ZipEntry>& entrie
         uint16_t clen  = get16(buf, pos + 32);
         e.local_offset = get32(buf, pos + 42);
 
-        // TODO 2: kiểm tra đủ dữ liệu rồi lấy tên
-        if (pos + 46 + nlen > buf.size()) return false;
+        if (pos + 46 + (size_t)nlen + xlen + clen > buf.size()) return false;
         e.name.assign(buf.begin() + pos + 46, buf.begin() + pos + 46 + nlen);
 
-        entries.push_back(e);
+        // Duyệt extra field tìm ZIP64 (ID 0x0001)
+        size_t ex = pos + 46 + nlen, ex_end = ex + xlen;
+        while (ex + 4 <= ex_end) {
+            uint16_t id = get16(buf, ex), sz = get16(buf, ex + 2);
+            size_t d = ex + 4;
+            if (d + sz > ex_end) return false;
+            if (id == 0x0001) {
+                size_t p = d;
+                auto take64 = [&](uint64_t& v) {
+                    if (p + 8 > d + sz) return false;
+                    v = get64(buf, p); p += 8;
+                    return true;
+                };
+                if (e.uncomp_size  == M && !take64(e.uncomp_size))  return false;
+                if (e.comp_size    == M && !take64(e.comp_size))    return false;
+                if (e.local_offset == M && !take64(e.local_offset)) return false;
+            }
+            ex = d + sz;
+        }
 
-        // TODO 3: nhảy tới entry kế tiếp
+        entries.push_back(e);
         pos += 46 + nlen + xlen + clen;
     }
     return true;
+
 }
 
 // Chống Zip Slip: từ chối đường dẫn tuyệt đối, ổ đĩa, '\' và thành phần ".."
@@ -73,22 +103,34 @@ static bool is_safe_name(const std::string& name) {
     return true;
 }
 
-// Giải nén raw deflate (khớp với deflateInit2 dùng -MAX_WBITS ở writer)
 static bool inflate_data(const uint8_t* src, size_t src_len,
-                         std::vector<uint8_t>& out, size_t expected) {
-    out.assign(expected, 0);
+                         std::vector<uint8_t>& out, uint64_t expected) {
+    out.assign((size_t)expected, 0);
     if (expected == 0) return true;
 
     z_stream strm{};
     if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) return false;
-    strm.next_in   = const_cast<Bytef*>(src);
-    strm.avail_in  = (uInt)src_len;
-    strm.next_out  = out.data();
-    strm.avail_out = (uInt)out.size();
-    int ret = inflate(&strm, Z_FINISH);
-    bool ok = (ret == Z_STREAM_END) && (strm.total_out == expected);
+
+    const size_t CHUNK = 1u << 30;
+    size_t in_pos = 0, out_pos = 0;
+    int ret = Z_OK;
+    do {
+        size_t in_n = std::min(src_len - in_pos, CHUNK);
+        strm.next_in  = const_cast<Bytef*>(src + in_pos);
+        strm.avail_in = (uInt)in_n;
+        do {
+            size_t out_n = std::min(out.size() - out_pos, CHUNK);
+            strm.next_out  = out.data() + out_pos;
+            strm.avail_out = (uInt)out_n;
+            ret = inflate(&strm, Z_NO_FLUSH);
+            if (ret != Z_OK && ret != Z_STREAM_END) { inflateEnd(&strm); return false; }
+            out_pos += out_n - strm.avail_out;
+        } while (strm.avail_out == 0 && ret != Z_STREAM_END);
+        in_pos += in_n - strm.avail_in;
+    } while (ret != Z_STREAM_END && in_pos < src_len);
+
     inflateEnd(&strm);
-    return ok;
+    return ret == Z_STREAM_END && out_pos == expected;
 }
 
 bool extract_zip(const std::string& zip_path, const std::string& dest_dir) {
@@ -129,7 +171,7 @@ bool extract_zip(const std::string& zip_path, const std::string& dest_dir) {
         uint16_t nlen = get16(buf, lo + 26);
         uint16_t xlen = get16(buf, lo + 28);
         size_t data_start = lo + 30 + nlen + xlen;
-        if (data_start + e.comp_size > buf.size()) {
+        if (data_start > buf.size() || e.comp_size > buf.size() - data_start) {
             std::cerr << "Truncated data: " << e.name << "\n";
             return false;
         }
@@ -153,7 +195,7 @@ bool extract_zip(const std::string& zip_path, const std::string& dest_dir) {
         //   nếu crc != e.crc thì in "CRC mismatch: <tên>" ra std::cerr và return false
         if (crc != e.crc)
         {
-            std::cerr<<"CRC mismatch: "<< e.name;
+            std::cerr<<"CRC mismatch: "<< e.name << "\n";
             return false;
         }
 

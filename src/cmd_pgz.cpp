@@ -54,10 +54,9 @@ int cmd_list(const std::vector<std::string>& args) {
     for (const auto& e : entries) {
         const char* method = e.method == 0 ? "store"
                            : e.method == 8 ? "deflate" : "?";
-        std::printf("%12u %12u %6.1f%%  %-8s %s\n",
-                    e.uncomp_size, e.comp_size,
-                    ratio_percent(e.uncomp_size, e.comp_size),
-                    method, e.name.c_str());
+        std::printf("%12llu %12llu %6.1f%%  %-8s %s\n",
+            (unsigned long long)e.uncomp_size, (unsigned long long)e.comp_size,
+            ratio_percent(e.uncomp_size, e.comp_size), method, e.name.c_str());
         total_size += e.uncomp_size;
         total_comp += e.comp_size;
     }
@@ -94,7 +93,7 @@ int cmd_version(const std::vector<std::string>& args) {
         print_usage("pgz");
         return 1;
     }
-    printf("PANGOZIP VERSION 0.0.1\n");
+    printf("PANGOZIP VERSION 0.0.2\n");
     printf("Author: Le Khanh Duy Nguyen - Ho Chi Minh City University of Teachnology and Engineering\n");
     return 0;
 }

@@ -24,3 +24,12 @@ inline uint32_t get32(const std::vector<uint8_t>& b, size_t pos) {
          | ((uint32_t)b[pos + 2] << 16)
          | ((uint32_t)b[pos + 3] << 24);
 }
+
+inline void put64(std::vector<uint8_t>& out, uint64_t v) {
+    put32(out, (uint32_t)(v & 0xFFFFFFFF));
+    put32(out, (uint32_t)(v >> 32));
+}
+
+inline uint64_t get64(const std::vector<uint8_t>& b, size_t pos) {
+    return (uint64_t)get32(b, pos) | ((uint64_t)get32(b, pos + 4) << 32);
+}

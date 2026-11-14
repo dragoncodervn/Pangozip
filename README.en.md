@@ -2,10 +2,10 @@
 
 [Tiếng Việt](README.md) | **English**
 
-Pangozip (`pgz`) is a command-line tool written in C++17 for **creating, listing, and extracting ZIP files**. The ZIP format itself (headers, Central Directory, CRC-32) is handled by the project's own code, while DEFLATE compression and decompression use the zlib library.
+Pangozip (`pgz`) is a command-line tool written in C++17 for **creating, listing, and extracting ZIP files**, including the **ZIP64** extension (files of 4 GiB or more, or archives with more than 65 535 entries). The ZIP format itself (headers, Central Directory, CRC-32) is handled by the project's own code, while DEFLATE compression and decompression use the zlib library.
 
 - **Author:** Le Khanh Duy Nguyen - Ho Chi Minh City University of Teachnology and Engineering (as printed by `pgz --version`)
-- **Version:** 0.0.1
+- **Version:** 0.0.2
 - **Repository:** `dragoncodervn/Pangozip`
 
 ## Table of Contents
@@ -35,6 +35,7 @@ Details:
 - **Integrity check:** when extracting, the CRC-32 of the decompressed data is recomputed and compared with the CRC in the archive. On a mismatch, extraction stops and reports `CRC mismatch`.
 - **Zip Slip protection:** entry names containing absolute paths, drive letters (`:`), backslashes (`\`), or `..` components are rejected.
 - **Format-aware reading:** the End of Central Directory (EOCD) record is located by scanning backward from the end of the file, the Central Directory is read to get the entry list, and each Local File Header is read to locate the entry data.
+- **ZIP64 support:** when an archive exceeds 32-bit limits (an entry size or offset of 4 GiB or more, or 65 535 or more entries), `--create` writes ZIP64 records, and only when needed. `--list` and `--extract` read ZIP64 archives. Files of 4 GiB or more are stored (method `store`) without compression.
 
 ## Requirements
 
@@ -107,6 +108,19 @@ pgz --extract out.zip -d output
 - Existing destination files are **overwritten** without confirmation.
 - Extraction stops at the first failing entry. Files already extracted before that point remain on disk.
 
+### Test ZIP64
+
+To exercise the ZIP64 code path without a 4 GiB file, set the `PGZ_FORCE_ZIP64` environment variable (any value) before creating the archive:
+
+```powershell
+$env:PGZ_FORCE_ZIP64 = "1"
+pgz --create zip64.zip hello.txt
+Remove-Item Env:PGZ_FORCE_ZIP64
+
+pgz --list zip64.zip
+pgz --extract zip64.zip -d out64
+```
+
 ### Version and help
 
 ```powershell
@@ -148,15 +162,15 @@ The `build/` directory holds build output and should not be committed as source.
 ### Data flow
 
 1. **`main.cpp`** reads `argv`, selects the command, and calls the matching function in **`cmd_pgz.cpp`**.
-2. **Create** (`create_zip`): walks the inputs, computes the CRC-32 of each file, compresses it with DEFLATE when that helps, and writes the Local Header and data into memory. Then it writes the Central Directory and EOCD, and saves the result to disk.
-3. **Read** (`read_zip_entries`): loads the whole file into memory, scans backward for the EOCD (up to 65 535 bytes, to skip over a comment), and parses each Central Directory header into a `ZipEntry`.
+2. **Create** (`create_zip`): walks the inputs, computes the CRC-32 of each file, compresses it with DEFLATE when that helps, and writes the Local Header and data into memory (adding the ZIP64 extra field when needed). Then it writes the Central Directory and EOCD (adding a Zip64 EOCD when needed), and saves the result to disk.
+3. **Read** (`read_zip_entries`): loads the whole file into memory, scans backward for the EOCD (up to 65 535 bytes, to skip over a comment). If the EOCD fields overflow, it reads the Zip64 EOCD through the locator. It then parses each Central Directory header into a `ZipEntry`, taking 64-bit values from the ZIP64 extra field when the 32-bit field is `0xFFFFFFFF`.
 4. **Extract** (`extract_zip`): for each entry, checks that the name is safe, reads the Local Header to find the data, decompresses it (`store` or `deflate`), verifies the CRC, and then writes the file.
 
 ### ZIP format details
 
-- **Local File Header** (signature `0x04034b50`): version 20, flags 0, method, modification time 0, modification date `0x21` (1980-01-01), CRC, compressed and uncompressed sizes, name length, and an empty extra field.
-- **Central Directory Header** (signature `0x02014b50`): adds version made by, external attributes (`0x10` for directories), and the offset of the Local Header.
-- **End of Central Directory** (signature `0x06054b50`): entry count, size and offset of the Central Directory, and no comment.
+- **Local File Header** (signature `0x04034b50`): version 20 (or 45 when ZIP64 is used), flags 0, method, modification time 0, modification date `0x21` (1980-01-01), CRC, compressed and uncompressed sizes, and name length. With ZIP64, the 32-bit sizes are set to `0xFFFFFFFF` and the extra field holds the 64-bit sizes.
+- **Central Directory Header** (signature `0x02014b50`): adds version made by, external attributes (`0x10` for directories), and the offset of the Local Header. When ZIP64 is needed, values that exceed 32 bits are set to `0xFFFFFFFF` and stored in extra field ID `0x0001`, in the order: uncompressed size, compressed size, offset.
+- **End of Central Directory** (signature `0x06054b50`): entry count, size and offset of the Central Directory, and no comment. If there are 65 535 or more entries, or the size/offset is 4 GiB or more, the EOCD fields are set to `0xFFFF`/`0xFFFFFFFF` and a **Zip64 EOCD record** (signature `0x06064b50`) and **Zip64 EOCD locator** (signature `0x07064b50`) are written before it.
 - DEFLATE data is **raw deflate** (`deflateInit2` with `-MAX_WBITS`), without a zlib header.
 - All numbers are written in **little-endian** order using the helpers in [bytes.hpp](header/bytes.hpp).
 
@@ -166,17 +180,17 @@ The `build/` directory holds build output and should not be committed as source.
 
 ## Known Limitations
 
-- **No ZIP64 support:** at most 65 535 entries, and sizes must fit in 32 bits (`create_zip` refuses archives with too many entries).
+- **Multi-disk (split) archives are not supported:** only single-disk archives are written and read.
 - **Extraction supports only method 0 (store) and method 8 (deflate).** Other methods fail with `Unsupported method`.
 - **Not supported:** encryption or passwords, ZIP comments, extra fields, real timestamps (the time is always 1980-01-01 00:00), file permissions, and symbolic links.
 - **The whole file is loaded into memory** when creating, listing, or extracting. Large archives use a lot of RAM.
 - **Entry names containing `:` or `\` are rejected** during extraction, even when they would be valid on Linux.
 - **No options** for compression level, excluding files, or extracting selected files only.
+- **File names with Vietnamese diacritics are not supported** when compressing and extracting (for example `tiếng.txt`, `ăn cơm.txt`). When creating a ZIP, the command reports `failed to create` or stops with `Illegal byte sequence`. The content of files containing Vietnamese text (UTF-8) is still compressed and extracted correctly. Rename such files to names without diacritics before archiving.
 
 ## Notes for Developers
 
-- [zip_reader.cpp](src/zip_reader.cpp) still contains `TODO 1/2/3` comments, but the code they describe is already implemented. These comments can be removed.
-- [zip_writer.cpp](src/zip_writer.cpp) has a comment block about CRC inside `write_local`. It should be shortened to a brief comment or removed.
-- [cmd_pgz.hpp](header/cmd_pgz.hpp) declares `static double ratio_percent`, but the function is defined in `cmd_pgz.cpp`. A `static` declaration in a header has no effect across files, so it should be removed from the header.
+- The `TODO` comments in [zip_reader.cpp](src/zip_reader.cpp) and [crc32.cpp](src/crc32.cpp) describe code that is already implemented. These comments can be removed.
+- [zip_writer.cpp](src/zip_writer.cpp) still has many old code blocks commented out (`write_local`, `write_central`, `write_eocd`, and the old `create_zip`). These blocks can be removed.
 - The CMake file is named `CmakeLists.txt` (lowercase `m`). Windows is case-insensitive, so the build still works there, but Linux and macOS require the exact name `CMakeLists.txt`.
 - The project does not have a LICENSE file yet.

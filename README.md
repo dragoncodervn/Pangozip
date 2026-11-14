@@ -2,10 +2,10 @@
 
 **Tiếng Việt** | [English](README.en.md)
 
-Pangozip (`pgz`) là một công cụ dòng lệnh viết bằng C++17 để **tạo, liệt kê và giải nén file ZIP**. Mã tự xử lý định dạng ZIP (header, Central Directory, CRC-32), còn việc nén/giải nén DEFLATE dùng thư viện zlib.
+Pangozip (`pgz`) là một công cụ dòng lệnh viết bằng C++17 để **tạo, liệt kê và giải nén file ZIP**, bao gồm cả định dạng **ZIP64** (file lớn hơn 4 GiB hoặc archive trên 65 535 entry). Mã tự xử lý định dạng ZIP (header, Central Directory, CRC-32), còn việc nén/giải nén DEFLATE dùng thư viện zlib.
 
 - **Tác giả:** Le Khanh Duy Nguyen - Ho Chi Minh City University of Teachnology and Engineering (theo thông tin trong `pgz --version`)
-- **Phiên bản:** 0.0.1
+- **Phiên bản:** 0.0.2
 - **Repository:** `dragoncodervn/Pangozip`
 
 ## Mục lục
@@ -35,6 +35,7 @@ Chi tiết:
 - **Kiểm tra toàn vẹn:** khi giải nén, CRC-32 của dữ liệu được tính lại và so với CRC trong ZIP. Nếu lệch, quá trình dừng và báo `CRC mismatch`.
 - **Chống Zip Slip:** tên entry chứa đường dẫn tuyệt đối, ký tự ổ đĩa (`:`), dấu `\`, hoặc thành phần `..` sẽ bị từ chối.
 - **Đọc đúng cấu trúc ZIP:** tìm End of Central Directory (EOCD) từ cuối file, rồi đọc Central Directory để lấy danh sách entry, sau đó đọc Local File Header để tìm dữ liệu.
+- **Hỗ trợ ZIP64:** khi archive vượt giới hạn 32 bit (entry có kích thước hoặc offset ≥ 4 GiB, hoặc ≥ 65 535 entry), `--create` tự ghi các record ZIP64 và chỉ dùng khi cần. `--list` và `--extract` đọc được archive ZIP64. File từ 4 GiB trở lên được lưu ở dạng `store` (không nén).
 
 ## Yêu cầu
 
@@ -107,6 +108,19 @@ pgz --extract out.zip -d output
 - File đích bị **ghi đè** nếu đã tồn tại, không có hỏi xác nhận.
 - Giải nén dừng ngay tại entry lỗi đầu tiên. Các file trước đó đã được ghi ra đĩa và không bị xóa.
 
+### Kiểm thử ZIP64
+
+Để thử đường ZIP64 mà không cần file 4 GiB, đặt biến môi trường `PGZ_FORCE_ZIP64` (giá trị bất kỳ) trước khi tạo ZIP:
+
+```powershell
+$env:PGZ_FORCE_ZIP64 = "1"
+pgz --create zip64.zip hello.txt
+Remove-Item Env:PGZ_FORCE_ZIP64
+
+pgz --list zip64.zip
+pgz --extract zip64.zip -d out64
+```
+
 ### Phiên bản và trợ giúp
 
 ```powershell
@@ -125,7 +139,8 @@ pgz --help
 Pangozip_Project/
 ├── CmakeLists.txt        # Cấu hình build CMake
 ├── README.md             # Tài liệu tiếng Việt
-├── README.en.md          # Tài liệu tiếng Anh├── header/
+├── README.en.md          # Tài liệu tiếng Anh
+├── header/
 │   ├── bytes.hpp         # Hàm đọc/ghi số nguyên little-endian (put16/32, get16/32)
 │   ├── cmd_pgz.hpp       # Khai báo các lệnh CLI
 │   ├── crc32.hpp         # Khai báo crc32_update()
@@ -147,15 +162,15 @@ Thư mục `build/` là kết quả build, không nên đưa vào mã nguồn.
 ### Luồng dữ liệu
 
 1. **`main.cpp`** đọc `argv`, chọn lệnh và chuyển cho hàm tương ứng trong **`cmd_pgz.cpp`**.
-2. **Tạo ZIP** (`create_zip`): duyệt các input, với mỗi file tính CRC-32, nén DEFLATE nếu có lợi, ghi Local Header + dữ liệu vào bộ nhớ. Sau đó ghi Central Directory và EOCD, rồi xuất ra file.
-3. **Đọc ZIP** (`read_zip_entries`): đọc toàn bộ file vào bộ nhớ, tìm EOCD (quét lùi tối đa 65 535 byte để bỏ qua comment), đọc các Central Directory Header để lấy `ZipEntry`.
+2. **Tạo ZIP** (`create_zip`): duyệt các input, với mỗi file tính CRC-32, nén DEFLATE nếu có lợi, ghi Local Header + dữ liệu vào bộ nhớ (thêm ZIP64 extra khi cần). Sau đó ghi Central Directory và EOCD (thêm Zip64 EOCD khi cần), rồi xuất ra file.
+3. **Đọc ZIP** (`read_zip_entries`): đọc toàn bộ file vào bộ nhớ, tìm EOCD (quét lùi tối đa 65 535 byte để bỏ qua comment). Nếu EOCD báo tràn, đọc Zip64 EOCD qua locator. Sau đó đọc các Central Directory Header để lấy `ZipEntry`, và lấy giá trị 64 bit từ extra field ZIP64 khi trường 32 bit là `0xFFFFFFFF`.
 4. **Giải nén** (`extract_zip`): với mỗi entry, kiểm tra tên an toàn, đọc Local Header để xác định vị trí dữ liệu, giải nén (`store` hoặc `deflate`), kiểm tra CRC, rồi ghi file.
 
 ### Định dạng ZIP được dùng
 
-- **Local File Header** (signature `0x04034b50`): version 20, flags 0, method, thời gian sửa đổi 0, ngày sửa đổi `0x21` (1980-01-01), CRC, kích thước nén và gốc, độ dài tên, extra field rỗng.
-- **Central Directory Header** (signature `0x02014b50`): thêm version made by, external attributes (`0x10` cho thư mục), và offset tới Local Header.
-- **End of Central Directory** (signature `0x06054b50`): số entry, kích thước và offset của Central Directory, không có comment.
+- **Local File Header** (signature `0x04034b50`): version 20 (hoặc 45 khi dùng ZIP64), flags 0, method, thời gian sửa đổi 0, ngày sửa đổi `0x21` (1980-01-01), CRC, kích thước nén và gốc, độ dài tên. Khi dùng ZIP64, kích thước 32 bit được đặt `0xFFFFFFFF` và extra field chứa kích thước 64 bit.
+- **Central Directory Header** (signature `0x02014b50`): thêm version made by, external attributes (`0x10` cho thư mục), và offset tới Local Header. Khi cần ZIP64, các giá trị vượt 32 bit được đặt `0xFFFFFFFF` và lưu trong extra field ID `0x0001` theo thứ tự: kích thước gốc, kích thước nén, offset.
+- **End of Central Directory** (signature `0x06054b50`): số entry, kích thước và offset của Central Directory, không có comment. Nếu số entry ≥ 65 535 hoặc kích thước/offset ≥ 4 GiB, EOCD đặt các trường tương ứng là `0xFFFF`/`0xFFFFFFFF` và trước nó có thêm **Zip64 EOCD record** (signature `0x06064b50`) cùng **Zip64 EOCD locator** (signature `0x07064b50`).
 - Dữ liệu DEFLATE là **raw deflate** (`deflateInit2` với `-MAX_WBITS`), không có header zlib.
 - Các số được ghi theo **little-endian** qua các hàm trong [bytes.hpp](header/bytes.hpp).
 
@@ -165,18 +180,18 @@ Thư mục `build/` là kết quả build, không nên đưa vào mã nguồn.
 
 ## Hạn chế đã biết
 
-- **Không hỗ trợ ZIP64:** tối đa 65 535 entry và kích thước dữ liệu trong 32 bit (`create_zip` từ chối khi vượt số entry).
+- **Chưa hỗ trợ archive nhiều đĩa (split/multi-disk):** chỉ ghi và đọc archive một đĩa.
 - **Chỉ hỗ trợ method 0 (store) và 8 (deflate)** khi giải nén. Các method khác bị báo lỗi `Unsupported method`.
 - **Không hỗ trợ:** mã hóa/mật khẩu, comment của ZIP, extra field, timestamp thật (thời gian luôn là 1980-01-01 00:00), quyền truy cập file, symbolic link.
 - **Đọc toàn bộ file vào RAM** khi tạo, liệt kê và giải nén. File ZIP lớn sẽ tốn nhiều bộ nhớ.
 - **Tên entry có `:` hoặc `\`** bị từ chối khi giải nén, kể cả khi đó là tên hợp lệ trên Linux.
 - **Không có tùy chọn** chọn mức nén, loại trừ file, hay chọn file cụ thể để giải nén.
+- **Tên file có dấu tiếng Việt chưa được hỗ trợ** khi nén và giải nén (ví dụ `tiếng.txt`, `ăn cơm.txt`). Khi tạo ZIP, lệnh sẽ báo `failed to create` hoặc dừng với lỗi `Illegal byte sequence`. Nội dung bên trong file có tiếng Việt (UTF-8) vẫn được nén và giải nén bình thường. Nên đổi tên file sang tên không dấu trước khi nén.
 
 ## Ghi chú cho người phát triển
 
-- Trong [zip_reader.cpp](src/zip_reader.cpp) vẫn còn các comment `TODO 1/2/3`, nhưng các phần đó đã được cài đặt. Có thể xóa các comment này.
-- [zip_writer.cpp](src/zip_writer.cpp) có một khối comment giải thích CRC đặt bên trong `write_local`. Nội dung này nên chuyển thành comment ngắn hoặc xóa.
-- [cmd_pgz.hpp](header/cmd_pgz.hpp) khai báo `static double ratio_percent`, nhưng hàm được định nghĩa trong `cmd_pgz.cpp`. Khai báo `static` trong header không có tác dụng với file khác, nên nên xóa khỏi header.
+- Các comment `TODO` trong [zip_reader.cpp](src/zip_reader.cpp) và [crc32.cpp](src/crc32.cpp) mô tả code đã được cài đặt. Có thể xóa các comment này.
+- [zip_writer.cpp](src/zip_writer.cpp) còn nhiều khối code cũ đã bị comment (`write_local`, `write_central`, `write_eocd` và `create_zip` bản cũ). Có thể xóa các khối này.
 - File CMake đặt tên `CmakeLists.txt` (chữ `m` viết thường). Windows không phân biệt hoa thường nên build vẫn chạy, nhưng trên Linux/macOS CMake yêu cầu đúng tên `CMakeLists.txt`.
 - Dự án chưa có file LICENSE.
 " 
